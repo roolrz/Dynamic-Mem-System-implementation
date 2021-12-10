@@ -81,6 +81,8 @@
                         error("Free List corrupted!"); \
                         return NULL; \
                     } \
+                    ptr->prev->next = ptr->next; \
+                    ptr->next->prev = ptr->prev; \
                     return ptr; \
                 } \
                 else { \
@@ -328,7 +330,7 @@ static int split_blk_if_necessary(mem_list_t * blk, size_t requested_size) {
 
     size_t new_blk_size = size - requested_size;
 
-    if(new_blk_size >= 16+2*SIZE_HorF) {
+    if(new_blk_size >= 2*sizeof(size_t)+2*SIZE_HorF) {
         new_blk_size = new_blk_size - 2*SIZE_HorF;
         debug("Spliting %ld into %ld and %ld", size+2*SIZE_HorF, requested_size+2*SIZE_HorF, new_blk_size+2*SIZE_HorF);
         if(new_blk_size%(2*WORD_SIZE) != 0) {
@@ -361,7 +363,7 @@ static int split_blk_if_necessary(mem_list_t * blk, size_t requested_size) {
  */
 static mem_list_t * coalesce_blk_if_possible(mem_list_t * blk) {
     void * real_header = &(blk->header);
-    void * real_footer = (blk->header & ~alignMask) + real_header + SIZE_HorF;
+    void * real_footer = (void *)blk + getBlkSize(blk) + 2*SIZE_HorF;
 
     if(check_blk(blk) != 0) {
         error("Context corrupted");
@@ -372,9 +374,10 @@ static mem_list_t * coalesce_blk_if_possible(mem_list_t * blk) {
     while((size_t)(real_header - SIZE_HorF) > (size_t)port_get_mem_pool_start()) {
         void * prev_footer = real_header - SIZE_HorF;
         if(((*(size_t *)prev_footer ^ magic_byte()) & alignMask) != 0) {
-            // Block probably already aligned, or undefined
+            // Block probably already assigned, or undefined
             break;
         }
+
         size_t prev_size = (*(size_t *)prev_footer ^ magic_byte()) & ~alignMask;
 
         void * prev_header = prev_footer - prev_size - SIZE_HorF;
@@ -412,7 +415,7 @@ static mem_list_t * coalesce_blk_if_possible(mem_list_t * blk) {
     while((size_t)(real_footer + SIZE_HorF) < (size_t)port_get_mem_pool_end()) {
         void * next_header = real_footer + SIZE_HorF;
         if((*(size_t *)next_header & alignMask) != 0) {
-            // Block probably already aligned, or undefined
+            // Block probably already assinged, or undefined
             break;
         }
         size_t next_size = *(size_t *)next_header & ~alignMask;
@@ -524,10 +527,10 @@ static mem_list_t * find_required_block(size_t size) {
 
         case 10: // None block satisfy the condition
             // Extend heap
-            if(port_extend_page(requiredPage(size)) != 0) {
+            if(port_extend_page(requiredPage(actualBlkSize(size))) != 0) {
                 return NULL;
             }
-            debug("Successfully extended %ld page(s)", requiredPage(size));
+            debug("Successfully extended %ld page(s)", requiredPage(actualBlkSize(size)));
 
             assigned_block = current_heap_end - 2*SIZE_HorF;
 
@@ -540,7 +543,7 @@ static mem_list_t * find_required_block(size_t size) {
             *(size_t *)(current_heap_end - SIZE_HorF) = 0x1;
 
             // Init new block
-            ((mem_list_t *)assigned_block)->header = requiredPage(size)*PAGE_SIZE - 2*SIZE_HorF;
+            ((mem_list_t *)assigned_block)->header = requiredPage(actualBlkSize(size))*PAGE_SIZE - 2*SIZE_HorF;
             *(size_t *)(current_heap_end - 2*SIZE_HorF) = ((mem_list_t *)assigned_block)->header ^ magic_byte();
 
             insert_blk((mem_list_t *)(assigned_block));
@@ -577,6 +580,11 @@ static int mm_initialize(void) {
 
     void * heap_start = port_get_mem_pool_start();
     void * heap_end = port_get_mem_pool_end();
+
+    if(((size_t)heap_start & alignMask) != 0) {
+        error("Heap start address incompatible");
+        return -1;
+    }
     
     // Init Heap header
     *(size_t *)(heap_start + WORD_SIZE) = (heap_end-heap_start) | 0x1;
@@ -637,8 +645,8 @@ void * my_malloc(size_t size) {
     
     // Get the actual size which fit the alignment requirement
     debug("Request %ld, assign %ld", size, alignedSize(size));
-    size = alignedSize(size);
 
+    size = alignedSize(size);
     // Find block
     mem_list_t * assigned_block = find_required_block(size);
 
