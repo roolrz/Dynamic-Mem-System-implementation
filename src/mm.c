@@ -257,6 +257,7 @@ static int insert_blk(mem_list_t * blk) {
     if(determine_free_list_idx(size) == 0) {
         // FIFO policy
         FREE_LIST[0] = blk;
+        blk->prev = NULL;
         blk->next = list;
         if(list)
             list->prev = blk;
@@ -673,6 +674,10 @@ void * my_malloc(size_t size) {
     debug("Request %ld, assign %ld", size, alignedSize(size));
 
     size = alignedSize(size);
+    // Enforce minimum block size so split_blk_if_necessary never creates a zero-size block
+    if(size < 2*WORD_SIZE) {
+        size = 2*WORD_SIZE;
+    }
     // Find block
     mem_list_t * assigned_block = find_required_block(size);
 
@@ -738,6 +743,10 @@ int my_free(void * ptr) {
     *footer = blk->header ^ magic_byte();
 
     blk = coalesce_blk_if_possible(blk);
+    if(blk == NULL) {
+        error("Coalesce failed!");
+        return -1;
+    }
     insert_blk(blk);
 
     return 0;
@@ -748,6 +757,8 @@ int my_free(void * ptr) {
  * 
  */
 void * my_calloc(size_t n_elements, size_t element_size) {
+    if(n_elements == 0 || element_size == 0)
+        return NULL;
     if(element_size <= (SIZE_MAX/n_elements))
         return my_malloc(n_elements*element_size);
     else // Overflow
