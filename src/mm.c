@@ -73,23 +73,6 @@
 #define requiredPage(size)  ((size%PAGE_SIZE)?(size/PAGE_SIZE + 1):(size/PAGE_SIZE))
 #define getBlkSize(ptr)     (ptr->header & ~alignMask)
 
-#define findBlkInList(ptr) \
-            while(ptr != NULL) { \
-                if(ptr->header >= size) { \
-                    info("%lx", ptr->header); \
-                    if((ptr->header & alignMask) != 0) { \
-                        error("Free List corrupted!"); \
-                        return NULL; \
-                    } \
-                    ptr->prev->next = ptr->next; \
-                    ptr->next->prev = ptr->prev; \
-                    return ptr; \
-                } \
-                else { \
-                    ptr = ptr->next; \
-                } \
-            }
-
 /*
  * It's really tricky to define the struct like that, the reason is that the struct stored
  * in Unalloced Memory Map (as shown), the unused space is not fixed, so unable to define
@@ -147,6 +130,38 @@ static int determine_free_list_idx(size_t size) {
 static int determine_free_list(size_t size) {
     if(size <= 512 && (FREE_LIST[0] != NULL)) {
         return 0;
+    }
+
+    static mem_list_t * find_block_in_list(int list_idx, size_t size) {
+        mem_list_t * ptr = FREE_LIST[list_idx];
+
+        while(ptr != NULL) {
+            if(getBlkSize(ptr) >= size) {
+                if((ptr->header & alignMask) != 0) {
+                    error("Free List corrupted!");
+                    return NULL;
+                }
+
+                if(ptr->prev != NULL) {
+                    ptr->prev->next = ptr->next;
+                }
+                else {
+                    FREE_LIST[list_idx] = ptr->next;
+                }
+
+                if(ptr->next != NULL) {
+                    ptr->next->prev = ptr->prev;
+                }
+
+                ptr->prev = NULL;
+                ptr->next = NULL;
+                return ptr;
+            }
+
+            ptr = ptr->next;
+        }
+
+        return NULL;
     }
     else if(size <= 1*1024*1024 && (FREE_LIST[1] != NULL)) {
         return 1;
@@ -472,58 +487,78 @@ static mem_list_t * coalesce_blk_if_possible(mem_list_t * blk) {
 static mem_list_t * find_required_block(size_t size) {
     void * current_heap_end = port_get_mem_pool_end();
     void * assigned_block = NULL;
-    mem_list_t * ptr_curr_list = NULL;
+    mem_list_t * found_block = NULL;
 
     switch(determine_free_list(size)) {
         case 0: // Find in block list[0]
-            ptr_curr_list = FREE_LIST[0];
-            // FIFO policy
-            findBlkInList(ptr_curr_list);
+            // FIFO policy (same lookup as sorted lists, first-fit in list order)
+            found_block = find_block_in_list(0, size);
+            if(found_block != NULL) {
+                return found_block;
+            }
 
         case 1: // Find in block list[1]
-            ptr_curr_list = FREE_LIST[1];
             // Best-Fit policy (Because the list sorted the block size, it's the same operation)
-            findBlkInList(ptr_curr_list);
+            found_block = find_block_in_list(1, size);
+            if(found_block != NULL) {
+                return found_block;
+            }
 
         case 2: // Find in block list[2]
-            ptr_curr_list = FREE_LIST[2];
             // Best-Fit policy (Because the list sorted the block size, it's the same operation)
-            findBlkInList(ptr_curr_list);
+            found_block = find_block_in_list(2, size);
+            if(found_block != NULL) {
+                return found_block;
+            }
 
         case 3: // Find in block list[3]
-            ptr_curr_list = FREE_LIST[3];
             // Best-Fit policy (Because the list sorted the block size, it's the same operation)
-            findBlkInList(ptr_curr_list);
+            found_block = find_block_in_list(3, size);
+            if(found_block != NULL) {
+                return found_block;
+            }
 
         case 4: // Find in block list[4]
-            ptr_curr_list = FREE_LIST[4];
             // Best-Fit policy (Because the list sorted the block size, it's the same operation)
-            findBlkInList(ptr_curr_list);
+            found_block = find_block_in_list(4, size);
+            if(found_block != NULL) {
+                return found_block;
+            }
 
         case 5: // Find in block list[5]
-            ptr_curr_list = FREE_LIST[5];
             // Best-Fit policy (Because the list sorted the block size, it's the same operation)
-            findBlkInList(ptr_curr_list);
+            found_block = find_block_in_list(5, size);
+            if(found_block != NULL) {
+                return found_block;
+            }
 
         case 6: // Find in block list[6]
-            ptr_curr_list = FREE_LIST[6];
             // Best-Fit policy (Because the list sorted the block size, it's the same operation)
-            findBlkInList(ptr_curr_list);
+            found_block = find_block_in_list(6, size);
+            if(found_block != NULL) {
+                return found_block;
+            }
 
         case 7: // Find in block list[7]
-            ptr_curr_list = FREE_LIST[7];
             // Best-Fit policy (Because the list sorted the block size, it's the same operation)
-            findBlkInList(ptr_curr_list);
+            found_block = find_block_in_list(7, size);
+            if(found_block != NULL) {
+                return found_block;
+            }
 
         case 8: // Find in block list[8]
-            ptr_curr_list = FREE_LIST[8];
             // Best-Fit policy (Because the list sorted the block size, it's the same operation)
-            findBlkInList(ptr_curr_list);
+            found_block = find_block_in_list(8, size);
+            if(found_block != NULL) {
+                return found_block;
+            }
 
         case 9: // Find in block list[9]
-            ptr_curr_list = FREE_LIST[9];
             // Best-Fit policy (Because the list sorted the block size, it's the same operation)
-            findBlkInList(ptr_curr_list);
+            found_block = find_block_in_list(9, size);
+            if(found_block != NULL) {
+                return found_block;
+            }
 
         case 10: // None block satisfy the condition
             // Extend heap
@@ -735,11 +770,22 @@ void * my_calloc(size_t n_elements, size_t element_size) {
  * 3. Free old block.
  */
 void * my_realloc(void * p, size_t size) {
+    if(p == NULL) {
+        return my_malloc(size);
+    }
+    if(size == 0) {
+        my_free(p);
+        return NULL;
+    }
+
     mem_list_t * blk = p - 2*SIZE_HorF;
     size_t old_size = getBlkSize(blk);
     
     void * new_space = my_malloc(size);
-    memcpy(new_space, p, (old_size < size)?(size):(old_size));
+    if(new_space == NULL) {
+        return NULL;
+    }
+    memcpy(new_space, p, (old_size < size)?(old_size):(size));
 
     if(my_free(p)) {
         // Error occurred
