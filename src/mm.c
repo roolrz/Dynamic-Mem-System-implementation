@@ -131,38 +131,6 @@ static int determine_free_list(size_t size) {
     if(size <= 512 && (FREE_LIST[0] != NULL)) {
         return 0;
     }
-
-    static mem_list_t * find_block_in_list(int list_idx, size_t size) {
-        mem_list_t * ptr = FREE_LIST[list_idx];
-
-        while(ptr != NULL) {
-            if(getBlkSize(ptr) >= size) {
-                if((ptr->header & alignMask) != 0) {
-                    error("Free List corrupted!");
-                    return NULL;
-                }
-
-                if(ptr->prev != NULL) {
-                    ptr->prev->next = ptr->next;
-                }
-                else {
-                    FREE_LIST[list_idx] = ptr->next;
-                }
-
-                if(ptr->next != NULL) {
-                    ptr->next->prev = ptr->prev;
-                }
-
-                ptr->prev = NULL;
-                ptr->next = NULL;
-                return ptr;
-            }
-
-            ptr = ptr->next;
-        }
-
-        return NULL;
-    }
     else if(size <= 1*1024*1024 && (FREE_LIST[1] != NULL)) {
         return 1;
     }
@@ -193,6 +161,24 @@ static int determine_free_list(size_t size) {
     else {
         return 10;
     }
+}
+
+static mem_list_t * find_block_in_list(int list_idx, size_t size) {
+    mem_list_t * ptr = FREE_LIST[list_idx];
+
+    while(ptr != NULL) {
+        if(getBlkSize(ptr) >= size) {
+            if((ptr->header & alignMask) != 0) {
+                error("Free List corrupted!");
+                return NULL;
+            }
+            return ptr;
+        }
+
+        ptr = ptr->next;
+    }
+
+    return NULL;
 }
 
 /*
@@ -320,6 +306,11 @@ static int delete_block(mem_list_t * blk) {
 
     if(list == blk) {
         FREE_LIST[determine_free_list_idx(size)] = blk->next;
+        if(blk->next != NULL) {
+            blk->next->prev = NULL;
+        }
+        blk->prev = NULL;
+        blk->next = NULL;
         return 0;
     }
 
